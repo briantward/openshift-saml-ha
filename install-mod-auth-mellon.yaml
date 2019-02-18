@@ -1,0 +1,125 @@
+---
+- name: install httpd on masters
+  hosts: masters
+  tasks:
+    - name: install packages
+      yum:
+        name: httpd,mod_auth_mellon,mod_ssl,openssl
+        state: latest
+    - name: copy httpd config file for mellon
+      copy:
+        src: mellon.conf
+        dest: /etc/httpd/conf.d/mellon.conf
+    - name: update mellon.conf for OCP public URL
+      replace:
+        path: /etc/httpd/conf.d/mellon.conf
+        regexp: '\$\{OCP_PUBLIC_URL\}'
+        replace: "{{ ocp_url }}"
+    - name: 'change port 80 to 81'
+      lineinfile:
+        path: /etc/httpd/conf/httpd.conf
+        regexp: '^Listen.*\:80$' # TODO need to grab regex match on (.*)
+        backrefs: yes
+        line: 'Listen :81'
+    - name: 'change port 443 to mellon proxy port'
+      replace:
+        path: /etc/httpd/conf.d/ssl.conf
+        regexp: '\b443\b'
+        replace: "{{ mellon_proxy_host_port }}"
+    - name: add ServerName to match SSL server cert
+      lineinfile:
+        path: /etc/httpd/conf.d/ssl.conf
+        insertafter: '#DocumentRoot "/var/www/html"'
+        line: 'ServerName {{ mellon_proxy_cn }}'
+    - name: update cert in ssl.conf
+      replace:
+        path: /etc/httpd/conf.d/ssl.conf
+        regexp: '^SSLCertificateFile.*$'
+        replace: 'SSLCertificateFile /etc/httpd/conf.d/lb-0.crt'
+    - name: update private key in ssl.conf
+      replace:
+        path: /etc/httpd/conf.d/ssl.conf
+        regexp: '^SSLCertificateKeyFile.*$'
+        replace: 'SSLCertificateKeyFile /etc/httpd/conf.d/lb-0.key'        
+
+- name: generate saml configs
+  hosts: master-0
+  tasks:
+    - name: run mellon config scripts
+      shell: |
+        mkdir /etc/httpd/saml2
+        cd /etc/httpd/saml2
+        mellon_endpoint_url="{{ mellon_proxy_url }}:{{ mellon_proxy_port }}/mellon"
+        mellon_entity_id="${mellon_endpoint_url}/metadata"
+        file_prefix="$(echo "$mellon_entity_id" | sed 's/[^A-Za-z.]/_/g' | sed 's/__*/_/g')"
+        /usr/libexec/mod_auth_mellon/mellon_create_metadata.sh $mellon_entity_id $mellon_endpoint_url
+        mv ${file_prefix}.cert /etc/httpd/saml2/mellon.crt
+        mv ${file_prefix}.key /etc/httpd/saml2/mellon.key
+        mv ${file_prefix}.xml /etc/httpd/saml2/mellon_metadata.xml
+        curl -k -o /etc/httpd/saml2/idp_metadata.xml {{ idp_url }}:{{idp_port}}/auth/realms/ocp/protocol/saml/descriptor
+        restorecon -R -F /etc/httpd/saml2
+    - name: create cert
+      # https://bugzilla.redhat.com/show_bug.cgi?id=1025057 gotta convert the pem from pkcs8 to pkcs1 for httpd
+      shell: | 
+        cd /root
+        openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -keyout lb-0.key -out lb-0.crt -subj "/C=US/ST=State/L=City/O=Company/OU=Org/CN={{ mellon_proxy_cn }}"
+        openssl rsa -in lb-0.key -out lb-0.key.pk1
+        cat lb-0.crt lb-0.key.pk1 > lb-0.pem
+        cp lb-0.* /etc/httpd/conf.d/
+        chmod 600 /etc/httpd/conf.d/lb-0*
+        restorecon -R -F /etc/httpd/conf.d
+    - name: archive lb certs
+      archive:
+        path: /etc/httpd/conf.d/lb-0.*
+        dest: /etc/httpd/conf.d/lb-0.tar.gz
+    - name: pull down lb certs
+      fetch:
+        src: /etc/httpd/conf.d/lb-0.tar.gz
+        dest: /tmp/lb-0.tar.gz
+        flat: yes
+    - name: archive mellon files
+      archive:
+        path: /etc/httpd/saml2
+        dest: /etc/httpd/mellon.tar.gz
+    - name: pull down mellon files
+      fetch:
+        src: /etc/httpd/mellon.tar.gz
+        dest: /tmp/mellon.tar.gz
+        flat: yes
+
+- name: copy mellon and lb cert to other masters
+  hosts: master-1, master-2
+  tasks:
+     - name: copy lb cert to other masters
+       unarchive: 
+         src: /tmp/lb-0.tar.gz
+         dest: /etc/httpd/conf.d/
+     - name: copy mellon files to other masters
+       unarchive:
+         src: /tmp/mellon.tar.gz
+         dest: /etc/httpd/
+
+- name: copy mellon pem to lb
+  hosts: lb-0
+  tasks:
+     - name: copy cert to lb
+       unarchive: 
+         src: /tmp/lb-0.tar.gz
+         dest: /etc/haproxy/
+       # validate secontext on pem file
+
+- name: open firewall and restart services
+  hosts: masters
+  tasks:
+    - name: check firewall rules
+      shell: iptables -L | grep dpt:pcsync-https
+      register: ruleexists
+      failed_when: "ruleexists.rc == 2"
+      changed_when: false
+    - name: expose https port 
+      command: iptables -A OS_FIREWALL_ALLOW -p tcp -m state --state NEW -m tcp --dport {{ mellon_proxy_host_port}} -j ACCEPT
+      when: "ruleexists.rc == 1"
+    - name: start httpd
+      service:
+        name: httpd
+        state: started

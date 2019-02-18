@@ -1,0 +1,130 @@
+---
+- name: RH-SSO identity provider is running on the load balancer host
+  hosts: lb-0
+  tasks:
+    - name: install required packages
+      yum: 
+        name: zip,unzip,java
+        state: latest
+    - name: check for archive
+      stat:
+        path: /home/quicklab/rh-sso-7.3.0.GA.zip
+      register: ssoarchive
+    - name: copy archive
+      copy:
+        src: ./rh-sso-7.3.0.GA.zip
+        dest: /home/quicklab/rh-sso-7.3.0.GA.zip
+      when: not ssoarchive.stat.exists
+    - name: unzip archive
+      unarchive: 
+        src: /home/quicklab/rh-sso-7.3.0.GA.zip
+        dest: /opt
+        remote_src: yes
+    - name: add jboss user
+      user: 
+        name: jboss
+        shell: /sbin/nologin
+        state: present
+    - name: verify permissions on rh-sso
+      file: 
+        path: /opt/rh-sso-7.3
+        owner: jboss
+        group: jboss
+        recurse: yes
+    - name: install rh-sso service config file
+      copy: 
+        src: /opt/rh-sso-7.3/bin/init.d/jboss-eap.conf 
+        dest: /etc/default/rh-sso.conf
+        remote_src: yes
+    - name: set home directory
+      lineinfile: 
+        path: /etc/default/rh-sso.conf
+        regexp: 'JBOSS_HOME='
+        backrefs: yes 
+        line: 'JBOSS_HOME="/opt/rh-sso-7.3"'
+    - name: set user name
+      lineinfile:
+        path: /etc/default/rh-sso.conf
+        regexp: 'JBOSS_USER='
+        backrefs: yes
+        line: 'JBOSS_USER=jboss'
+    - name: set log file
+      lineinfile: 
+        path: /etc/default/rh-sso.conf
+        regexp: 'JBOSS_CONSOLE_LOG='
+        backrefs: yes
+        line: 'JBOSS_CONSOLE_LOG="/var/log/rh-sso/console.log"'
+    - name: set to bind to all interfaces
+      lineinfile: 
+        path: /etc/default/rh-sso.conf
+        regexp: 'JBOSS_OPTS='
+        backrefs: yes
+        line: 'JBOSS_OPTS="-b 0.0.0.0"'
+    - name: install service file
+      copy: 
+        src: /opt/rh-sso-7.3/bin/init.d/jboss-eap-rhel.sh 
+        dest: /etc/init.d/rh-sso.sh
+        remote_src: yes
+    - name: update service name reference in service file
+      lineinfile:
+        path: /etc/init.d/rh-sso.sh
+        regexp: "# processname: jboss-eap"
+        backrefs: yes
+        line: "# processname: rh-sso"
+    - name: update pidfile reference in service file
+      lineinfile:
+        path: /etc/init.d/rh-sso.sh
+        regexp: "# pidfile: /var/run/jboss-eap/jboss-eap.pid"
+        backrefs: yes
+        line: "# pidfile: /var/run/rh-sso/rh-sso.pid"
+    - name: update conf file reference in service file
+      lineinfile:
+        path: /etc/init.d/rh-sso.sh
+        regexp: "# config: /etc/default/jboss-eap.conf"
+        backrefs: yes
+        line: "# config: /etc/default/rh-sso.conf"
+    - name: update rh-sso name in service file
+      lineinfile:
+        path: /etc/init.d/rh-sso.sh
+        regexp: "JBOSS_NAME='jboss-eap'"
+        backrefs: yes
+        line: "JBOSS_NAME='rh-sso'"
+    - name: update dir in service file
+      lineinfile:
+        path: /etc/init.d/rh-sso.sh
+        regexp: 'JBOSS_PIDFILE=\/var\/run\/jboss-eap\/\$JBOSS_NAME\.pid'
+        backrefs: yes
+        line: "JBOSS_PIDFILE=/var/run/rh-sso/$JBOSS_NAME.pid"
+    - name: update permssions
+      file: 
+        path: /etc/init.d/rh-sso.sh
+        mode: +x
+    - name: add rh-sso service
+      shell: chkconfig --add /etc/init.d/rh-sso.sh
+    - name: run rh-sso service
+      service: 
+        name: rh-sso
+        state: started
+    - name: validate https rh-sso
+      get_url: 
+        url: https://localhost:{{ idp_port }}
+        dest: /tmp
+        validate_certs: no
+    - name: expose port 
+      iptables:
+        chain: OS_FIREWALL_ALLOW
+        protocol: tcp
+        ctstate: NEW
+        syn: match
+        destination_port: "{{ idp_port }}"
+        jump: ACCEPT
+    - name: create admin user
+      shell: /opt/rh-sso-7.3/bin/add-user-keycloak.sh -u {{ idp_admin_user }} -p {{ idp_admin_password }}
+    - name: restart rh-sso
+      service:
+        name: rh-sso
+        state: restarted
+    - name: login admin user
+      command: /opt/rh-sso-7.3/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user admin --password ***REMOVED***
+    - name: create ocp realm
+      command: /kcadm.sh create realms -s realm=ocp -s enabled=true

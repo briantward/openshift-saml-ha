@@ -1,0 +1,24 @@
+[all:vars]
+ocp_url=
+idp_url=
+idp_port=
+idp_admin_user=
+idp_admin_password=
+mellon_proxy_cn=
+mellon_proxy_url=
+mellon_proxy_port=
+mellon_proxy_host_port=
+
+[masters]
+master-2 ansible_host=fqdn
+master-0 ansible_host=fqdn
+master-1 ansible_host=fqdn
+
+[infra]
+infra-0 ansible_host=fqdn
+
+[workers]
+node-0 ansible_host=fqdn
+
+[lb]
+lb-0 ansible_host=fqdn

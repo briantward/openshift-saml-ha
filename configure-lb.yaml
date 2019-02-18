@@ -1,0 +1,44 @@
+---
+- name: Gather all facts
+  gather_facts: True
+  hosts: all
+  tasks: []
+
+- name: Configure HAProxy Load Balancer
+  hosts: lb-0
+  tasks:
+    - name: update haproxy.cfg
+      blockinfile:
+        path: /etc/haproxy/haproxy.cfg
+        insertafter: EOF
+        block: | 
+          frontend  mellon-proxy
+              bind *:{{ mellon_proxy_port }} ssl crt /etc/haproxy/lb-0.pem
+              default_backend mellon-proxy
+              mode http
+          
+          backend mellon-proxy
+              balance source
+              mode http
+              stick-table type ip size 1M
+              stick on src
+              # TODO test ssl verify ca-file /etc/haproxy/lb-0.pem
+              server      master0 {{ hostvars['master-0']['ansible_default_ipv4']['address'] }}:{{ mellon_proxy_host_port }} ssl verify none
+              server      master1 {{ hostvars['master-1']['ansible_default_ipv4']['address'] }}:{{ mellon_proxy_host_port }} ssl verify none
+              server      master2 {{ hostvars['master-2']['ansible_default_ipv4']['address'] }}:{{ mellon_proxy_host_port }} ssl verify none
+    - name: update selinux boolean and restore contexts
+      shell: | 
+        setsebool haproxy_connect_any=true
+        restorecon -R -F /etc/haproxy
+    - name: expose port
+      iptables:
+        chain: OS_FIREWALL_ALLOW
+        protocol: tcp
+        ctstate: NEW
+        syn: match
+        destination_port: "{{ mellon_proxy_port }}"
+        jump: ACCEPT        
+    - name: restart haproxy
+      service:
+        name: haproxy
+        state: restarted

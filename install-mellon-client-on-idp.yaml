@@ -1,0 +1,12 @@
+---
+- name: Install Mellon client on IdP
+  hosts: lb-0
+  tasks:
+    - name: push mellon
+      unarchive:
+        src: /tmp/mellon.tar.gz
+        dest: /opt
+
+        #TODO create client for mellon
+        #create test-user for realm
+        #create user mapping for realm/client

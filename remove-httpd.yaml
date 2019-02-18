@@ -1,0 +1,10 @@
+---
+- name: Remove httpd
+  hosts: masters
+  tasks:
+    - name: Uninstall apache
+      yum:
+        name: httpd
+        state: removed
+    - name: cleanup directories
+      command: rm -Rf /etc/httpd
