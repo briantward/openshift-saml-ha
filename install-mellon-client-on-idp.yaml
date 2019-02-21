@@ -6,7 +6,20 @@
       unarchive:
         src: /tmp/mellon.tar.gz
         dest: /opt
-
-        #TODO create client for mellon
-        #create test-user for realm
-        #create user mapping for realm/client
+    - name: push idp-mappers.json
+      copy:
+        src: idp-mappers.json
+        dest: /opt/saml2
+    - name: create client for mellon
+      shell: |
+        access_token=`curl -k -d "client_id=admin-cli" -d "username={{ idp_admin_user }}" --data-urlencode "password={{ idp_admin_password }}" -d "grant_type=password" "{{ idp_url }}/auth/realms/master/protocol/openid-connect/token"| jq -r '.access_token'`
+        client_json=`curl -k -v \
+            -H "Authorization: bearer $access_token" \
+            -H "Content-Type: application/json;charset=utf-8" \
+            --data "@/opt/saml2/mellon_metadata.xml" \
+            {{ idp_url }}/auth/admin/realms/ocp/client-description-converter` > /opt/saml2/mellon_metadata.json
+        jq -s '.[0] * .[1]' /opt/saml2/mellon_metadata.json /opt/saml2/mappers.json > /opt/saml2/mellon_metadata_mappers.json
+        /opt/rh-sso-7.3/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user admin --password ***REMOVED***
+        /opt/rh-sso-7.3/bin/kcadm.sh create clients -r ocp-test -f /opt/saml2/mellon_metadata_mappers.json
+        /opt/rh-sso-7.3/bin/kcadm.sh create users -r ocp-test -s username=test-user -s enabled=true -o --fields id,username
+        /opt/rh-sso-7.3/bin/kcadm.sh set-password -r ocp-test --username test-user --new-password password
