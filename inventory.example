@@ -8,6 +8,8 @@ mellon_proxy_cn=
 mellon_proxy_url=
 mellon_proxy_port=
 mellon_proxy_host_port=
+ocp_realm=
+realm_test_user=
 
 [masters]
 master-2 ansible_host=fqdn
