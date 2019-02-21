@@ -10,6 +10,12 @@
       copy:
         src: idp-mappers.json
         dest: /opt/saml2
+    - name: install EPEL
+      command: rpm -ivh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+    - name: install jq
+      yum:
+        name: jq
+        state: latest
     - name: create client for mellon
       shell: |
         access_token=`curl -k -d "client_id=admin-cli" -d "username={{ idp_admin_user }}" --data-urlencode "password={{ idp_admin_password }}" -d "grant_type=password" "{{ idp_url }}/auth/realms/master/protocol/openid-connect/token"| jq -r '.access_token'`
