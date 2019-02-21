@@ -125,6 +125,6 @@
         name: rh-sso
         state: restarted
     - name: login admin user
-      command: /opt/rh-sso-7.3/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user admin --password ***REMOVED***
+      command: /opt/rh-sso-7.3/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user {{ idp_admin_user }} --password {{ idp_admin_password }}
     - name: create ocp realm
-      command: /kcadm.sh create realms -s realm=ocp -s enabled=true
+      command: /kcadm.sh create realms -s realm={{ ocp_realm }} -s enabled=true
